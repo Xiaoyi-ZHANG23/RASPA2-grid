@@ -297,136 +297,197 @@ VECTOR MapZToBox(VECTOR pos)
   return pos;
 }
 
+// Structure to hold a list of coordinates
+typedef struct {
+    int num_points;
+    POINT* points;
+} COORDINATE_LIST;
+
+// Function to read coordinates from the provided file format
+COORDINATE_LIST ReadCoordinatesFromFile(const char* filename)
+{
+    COORDINATE_LIST coord_list;
+    FILE* file = fopen(filename, "r");
+    if (!file)
+    {
+        fprintf(stderr, "Error opening file %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+
+    char line[1024];
+    int capacity = 1000; // Initial capacity for dynamic array
+    int num_points = 0;
+
+    // Allocate initial memory for points
+    coord_list.points = (POINT*)malloc(capacity * sizeof(POINT));
+    if (!coord_list.points)
+    {
+        fprintf(stderr, "Memory allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Read and ignore the header line
+    if (fgets(line, sizeof(line), file) == NULL)
+    {
+        fprintf(stderr, "Error reading header line from %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+
+    // Read the coordinates until end of file
+    while (fgets(line, sizeof(line), file) != NULL)
+    {
+        // Skip empty lines
+        if (strlen(line) <= 1) continue;
+
+        REAL x, y, z;
+        if (sscanf(line, "%lf %lf %lf", &x, &y, &z) != 3)
+        {
+            fprintf(stderr, "Error parsing line: %s\n", line);
+            exit(EXIT_FAILURE);
+        }
+
+        // Expand capacity if necessary
+        if (num_points >= capacity)
+        {
+            capacity *= 2;
+            coord_list.points = (POINT*)realloc(coord_list.points, capacity * sizeof(POINT));
+            if (!coord_list.points)
+            {
+                fprintf(stderr, "Memory allocation error during realloc\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        coord_list.points[num_points].x = x;
+        coord_list.points[num_points].y = y;
+        coord_list.points[num_points].z = z;
+        num_points++;
+    }
+
+    coord_list.num_points = num_points;
+    fclose(file);
+    return coord_list;
+}
+
 void MakeASCIGrid(void)
 {
-  int i,j,k,l,typeA,save;
-  REAL percent,teller,TailEnergy;
-  POINT pos;
-  REAL value,third_derivative;
-  VECTOR first_derivative;
-  REAL_MATRIX3x3 second_derivative;
-  char buffer[1024];
-  FILE *FilePtr;
+    int l, typeA, save;
+    REAL TailEnergy;
+    POINT pos;
+    REAL value, third_derivative;
+    VECTOR first_derivative;
+    REAL_MATRIX3x3 second_derivative;
+    char buffer[1024];
+    FILE *FilePtr;
+    COORDINATE_LIST coord_list;
+    const char* filenames[] = {
+        "grid_coordinates.txt",
+        "rotated_grid_coordinates.txt",
+        "translated_grid_coordinates.txt"
+    };
+    const char* output_filenames[] = {
+        "energy_grid.txt",
+        "rotated_energy_grid.txt",
+        "translated_energy_grid.txt"
+    };
+    int num_files = 3;
 
-  if (STREAM)
-  {
-    fprintf(stderr, "Streaming not yet supported for this function.");
-    exit(0);
-  }
+    if (STREAM)
+    {
+        fprintf(stderr, "Streaming not yet supported for this function.");
+        exit(0);
+    }
 
-  CurrentSystem=0;
-  if(MIN3(BoxProperties[CurrentSystem].cx,BoxProperties[CurrentSystem].cy,
-          BoxProperties[CurrentSystem].cz)<CutOffVDW)
-  {
-     fprintf(stderr, "ERROR:  Cutoff smaller than half of one of the perpendicular boxlengths !!!\n");
-     fprintf(stderr, "        (Cutoff: %lf perpendicular boxlengths: %lf %lf %lf)\n",(double)CutOffVDW,
-             (double)BoxProperties[CurrentSystem].cx,(double)BoxProperties[CurrentSystem].cy,(double)BoxProperties[CurrentSystem].cz);
-     fprintf(stderr, "Advice: choose more unitcells for constructing the grid.\n");
-     exit(0);
-  }
+    CurrentSystem = 0;
+    if (MIN3(BoxProperties[CurrentSystem].cx, BoxProperties[CurrentSystem].cy,
+             BoxProperties[CurrentSystem].cz) < CutOffVDW)
+    {
+        fprintf(stderr, "ERROR: Cutoff smaller than half of one of the perpendicular box lengths!\n");
+        fprintf(stderr, "       (Cutoff: %lf, Box lengths: %lf %lf %lf)\n", (double)CutOffVDW,
+                (double)BoxProperties[CurrentSystem].cx, (double)BoxProperties[CurrentSystem].cy, (double)BoxProperties[CurrentSystem].cz);
+        fprintf(stderr, "Advice: Choose more unit cells for constructing the grid.\n");
+        exit(0);
+    }
 
-  NumberOfAdsorbateMolecules[CurrentSystem]=0;
-  NumberOfCationMolecules[CurrentSystem]=0;
+    NumberOfAdsorbateMolecules[CurrentSystem] = 0;
+    NumberOfCationMolecules[CurrentSystem] = 0;
 
-  CalculateForce();
-  TailEnergy=UTailCorrection[CurrentSystem];
+    CalculateForce();
+    TailEnergy = UTailCorrection[CurrentSystem];
 
-  save=ChargeMethod;
-  ChargeMethod=NONE;
+    save = ChargeMethod;
+    ChargeMethod = NONE;
 
-  // compute the size of the grid and the shift of the origin of the enclosing box
-  SizeGrid.x=SizeGrid.y=SizeGrid.z=0.0;
-  ShiftGrid.x=ShiftGrid.y=ShiftGrid.z=0.0;
-
-  SizeGrid.x+=fabs(UnitCellBox[CurrentSystem].ax);
-  SizeGrid.y+=fabs(UnitCellBox[CurrentSystem].ay);
-  SizeGrid.z+=fabs(UnitCellBox[CurrentSystem].az);
-  if(UnitCellBox[CurrentSystem].ax<0.0) ShiftGrid.x+=UnitCellBox[CurrentSystem].ax;
-  if(UnitCellBox[CurrentSystem].ay<0.0) ShiftGrid.y+=UnitCellBox[CurrentSystem].ay;
-  if(UnitCellBox[CurrentSystem].az<0.0) ShiftGrid.z+=UnitCellBox[CurrentSystem].az;
-
-  SizeGrid.x+=fabs(UnitCellBox[CurrentSystem].bx);
-  SizeGrid.y+=fabs(UnitCellBox[CurrentSystem].by);
-  SizeGrid.z+=fabs(UnitCellBox[CurrentSystem].bz);
-  if(UnitCellBox[CurrentSystem].bx<0.0) ShiftGrid.x+=UnitCellBox[CurrentSystem].bx;
-  if(UnitCellBox[CurrentSystem].by<0.0) ShiftGrid.y+=UnitCellBox[CurrentSystem].by;
-  if(UnitCellBox[CurrentSystem].bz<0.0) ShiftGrid.z+=UnitCellBox[CurrentSystem].bz;
-
-  SizeGrid.x+=fabs(UnitCellBox[CurrentSystem].cx);
-  SizeGrid.y+=fabs(UnitCellBox[CurrentSystem].cy);
-  SizeGrid.z+=fabs(UnitCellBox[CurrentSystem].cz);
-  if(UnitCellBox[CurrentSystem].cx<0.0) ShiftGrid.x+=UnitCellBox[CurrentSystem].cx;
-  if(UnitCellBox[CurrentSystem].cy<0.0) ShiftGrid.y+=UnitCellBox[CurrentSystem].cy;
-  if(UnitCellBox[CurrentSystem].cz<0.0) ShiftGrid.z+=UnitCellBox[CurrentSystem].cz;
-
-  // compute the number of grid points
-  NumberOfVDWGridPoints.x=(int)(SizeGrid.x/SpacingVDWGrid);
-  NumberOfVDWGridPoints.y=(int)(SizeGrid.y/SpacingVDWGrid);
-  NumberOfVDWGridPoints.z=(int)(SizeGrid.z/SpacingVDWGrid);
-
-  DeltaVDWGrid.x=SizeGrid.x/(REAL)NumberOfVDWGridPoints.x;
-  DeltaVDWGrid.y=SizeGrid.y/(REAL)NumberOfVDWGridPoints.y;
-  DeltaVDWGrid.z=SizeGrid.z/(REAL)NumberOfVDWGridPoints.z;
-
-  fprintf(stderr, "ShiftGrid: %g %g %g\n",ShiftGrid.x,ShiftGrid.y,ShiftGrid.z);
-  fprintf(stderr, "SizeGrid: %g %g %g\n",SizeGrid.x,SizeGrid.y,SizeGrid.z);
-  fprintf(stderr, "Number of grid points: %d %d %d\n",NumberOfVDWGridPoints.x,NumberOfVDWGridPoints.y,NumberOfVDWGridPoints.z);
-
-  percent=100.0/(REAL)((NumberOfVDWGridPoints.x+1)*NumberOfGrids);
-  teller=0.0;
-
-  fprintf(OutputFilePtr[CurrentSystem],"\n\n");
-  fprintf(OutputFilePtr[CurrentSystem],"Generating an ASCI interpolation grid (%d x %d x %d)\n",NumberOfVDWGridPoints.x,NumberOfVDWGridPoints.y,NumberOfVDWGridPoints.z);
-  fprintf(OutputFilePtr[CurrentSystem],"========================================================\n\n");
-  fflush(OutputFilePtr[CurrentSystem]);
-
-  mkdir("ASCI_Grids",S_IRWXU);
-
-  for(l=0;l<NumberOfGrids;l++)
-  {
-    fprintf(OutputFilePtr[CurrentSystem],"Creating grid %d [%s]\n",l,PseudoAtoms[GridTypeList[l]].Name);
+    fprintf(OutputFilePtr[CurrentSystem], "\n\n");
+    fprintf(OutputFilePtr[CurrentSystem], "Generating energy grids from coordinate files\n");
+    fprintf(OutputFilePtr[CurrentSystem], "========================================================\n\n");
     fflush(OutputFilePtr[CurrentSystem]);
 
-    sprintf(buffer,"ASCI_Grids/asci_grid_%s.grid",PseudoAtoms[GridTypeList[l]].Name);
-    FilePtr=fopen(buffer,"w");
+    mkdir("ASCI_Grids", S_IRWXU);
 
-    typeA=GridTypeList[l];
-    for(i=0;i<=NumberOfVDWGridPoints.x;i++)
+    for (int file_index = 0; file_index < num_files; file_index++)
     {
-      teller=teller+1.0;
-      for(j=0;j<=NumberOfVDWGridPoints.y;j++)
-      {
-        for(k=0;k<=NumberOfVDWGridPoints.z;k++)
+        fprintf(OutputFilePtr[CurrentSystem], "Processing file: %s\n", filenames[file_index]);
+        fflush(OutputFilePtr[CurrentSystem]);
+
+        coord_list = ReadCoordinatesFromFile(filenames[file_index]);
+
+        sprintf(buffer, "ASCI_Grids/%s", output_filenames[file_index]);
+        FilePtr = fopen(buffer, "w");
+        if (!FilePtr)
         {
-          switch(BoundaryCondition[CurrentSystem])
-          {
-            case CUBIC:
-            case RECTANGULAR:
-            case TRICLINIC:
-            default:
-              pos.x=i*SizeGrid.x/NumberOfVDWGridPoints.x+ShiftGrid.x;
-              pos.y=j*SizeGrid.y/NumberOfVDWGridPoints.y+ShiftGrid.y;
-              pos.z=k*SizeGrid.z/NumberOfVDWGridPoints.z+ShiftGrid.z;
-
-              // apply boundary condition
-              //value=CalculateFrameworkVDWEnergyAtPosition(pos,typeA);
-              CalculateDerivativesAtPositionVDW(pos,typeA,&value,&first_derivative,&second_derivative,&third_derivative);
-              break;
-          }
-
-          // cap the value
-          if(value<EnergyOverlapCriteria)
-            fprintf(FilePtr,"%g %g %g %g %g %g %g\n",pos.x,pos.y,pos.z,value*ENERGY_TO_KELVIN,
-                    -first_derivative.x*ENERGY_TO_KELVIN,-first_derivative.y*ENERGY_TO_KELVIN,-first_derivative.z*ENERGY_TO_KELVIN);
-          else
-            fprintf(FilePtr,"%g %g %g %s %s %s %s\n",pos.x,pos.y,pos.z,"?","?","?","?");
+            fprintf(stderr, "Error opening output file %s\n", buffer);
+            exit(EXIT_FAILURE);
         }
-      }
-      fprintf(OutputFilePtr[CurrentSystem],"Percentage finished                      : %d\n",(int)(teller*percent));
-      fflush(OutputFilePtr[CurrentSystem]);
+
+        REAL percent = 100.0 / (REAL)(coord_list.num_points * NumberOfGrids);
+        REAL teller = 0.0;
+
+        for (l = 0; l < NumberOfGrids; l++)
+        {
+            fprintf(OutputFilePtr[CurrentSystem], "Creating grid %d [%s] for file %s\n", l, PseudoAtoms[GridTypeList[l]].Name, filenames[file_index]);
+            fflush(OutputFilePtr[CurrentSystem]);
+
+            typeA = GridTypeList[l];
+
+            for (int i = 0; i < coord_list.num_points; i++)
+            {
+                teller += 1.0;
+                pos = coord_list.points[i];
+
+                // // Apply boundary conditions if necessary
+                // switch (BoundaryCondition[CurrentSystem])
+                // {
+                //     case CUBIC:
+                //     case RECTANGULAR:
+                //     case TRICLINIC:
+                //     default:
+                //         // Map position into simulation box if needed
+                //         pos = ApplyBoundaryCondition(pos, CurrentSystem);
+                //         break;
+                // }
+
+                // Compute energy and derivatives at the given position
+                CalculateDerivativesAtPositionVDW(pos, typeA, &value, &first_derivative, &second_derivative, &third_derivative);
+
+                // Cap the value if necessary
+                if (value < EnergyOverlapCriteria)
+                    fprintf(FilePtr, "%g %g %g %g %g %g %g\n", pos.x, pos.y, pos.z, value * ENERGY_TO_KELVIN,
+                            -first_derivative.x * ENERGY_TO_KELVIN, -first_derivative.y * ENERGY_TO_KELVIN, -first_derivative.z * ENERGY_TO_KELVIN);
+                else
+                    fprintf(FilePtr, "%g %g %g ? ? ? ?\n", pos.x, pos.y, pos.z);
+
+                // Progress update every 10%
+                if ((int)(teller * percent) % 10 == 0)
+                {
+                    fprintf(OutputFilePtr[CurrentSystem], "Percentage finished: %d%%\n", (int)(teller * percent));
+                    fflush(OutputFilePtr[CurrentSystem]);
+                }
+            }
+        }
+        fclose(FilePtr);
+        free(coord_list.points);
     }
-    fclose(FilePtr);
-  }
 }
 
 
